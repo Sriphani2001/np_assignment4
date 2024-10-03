@@ -12,10 +12,8 @@ using namespace std;
 
 int main(int argc, char *argv[]){
   
-  /* Do more magic */
-
-
-  
+ 
+ 
   printf("done.\n");
   return(0);
 
