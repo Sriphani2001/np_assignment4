@@ -1,7 +1,4 @@
-
 all: serverthread serverfork
-
-
 
 serverthread.o: serverthread.cpp
 	$(CXX) -Wall -c serverthread.cpp -I.
@@ -9,13 +6,11 @@ serverthread.o: serverthread.cpp
 serverfork.o: serverfork.cpp
 	$(CXX) -Wall -c serverfork.cpp -I.
 
-
 serverfork: serverfork.o 
 	$(CXX) -L./ -Wall -o serverfork serverfork.o
 
 serverthread: serverthread.o 
 	$(CXX) -L./ -Wall -o serverthread serverthread.o -lpthread
 
-
 clean:
-	rm *.o *.a perf_*.txt  tmp.* serverfork serverthread
+	rm -f *.o *.a perf_*.txt tmp.* serverfork serverthread

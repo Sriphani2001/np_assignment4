@@ -9,6 +9,8 @@
 #include <fcntl.h>
 #include <time.h>
 #include <arpa/inet.h>
+#include <unistd.h>  // For close() and fork()
+
 
 #define BUFFER_SIZE 1024
 
