@@ -2,7 +2,7 @@
 
 ##Variables update as to fit your scenario
 portFORK=8282
-portTHREAD=8283
+portTHREAD=8281
 testing=1
 
 head -c 10000 < /dev/urandom > big
