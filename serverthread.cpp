@@ -34,13 +34,11 @@ void display_error(const char *msg, bool halt_flag)
 }
 
 // handles the client request
+// handles the client request
 void handle_client_request(int client_socket)
 {
     char recv_buffer[BUFFER_SIZE];  // buffer to store client's request
     int recv_len;
-    time_t current_time;  // variable to store current time
-    struct tm *time_info;
-    char time_str[30];  // string to store formatted time
 
     FILE *html_file;  // file pointer for the requested HTML file
     char file_name[100];  // buffer for the file name
@@ -50,7 +48,7 @@ void handle_client_request(int client_socket)
     // bzero is used to zero out the buffer
     bzero(recv_buffer, sizeof(recv_buffer));
 
-    // receive data from the client (tried recv with flags, but default worked better)
+    // receive data from the client
     recv_len = recv(client_socket, recv_buffer, sizeof(recv_buffer) - 1, 0);
     if (recv_len < 0)  // if recv fails, log error and exit thread
     {
@@ -61,18 +59,22 @@ void handle_client_request(int client_socket)
 
     recv_buffer[recv_len - 2] = '\0';  // terminate the received string properly
 
-    // check if the request starts with "GET "
-    if (strncmp(recv_buffer, "GET ", 4) != 0)
+    // Check if the request is a GET or HEAD request
+    bool is_get_request = (strncmp(recv_buffer, "GET ", 4) == 0);
+    bool is_head_request = (strncmp(recv_buffer, "HEAD ", 5) == 0);
+
+    if (!is_get_request && !is_head_request)
     {
-        // tried allowing other HTTP methods, but it's better to restrict to GET
-        const char *error_msg = "HTTP/1.1 400 Bad Request\n\nInvalid Command. Please use: GET <file_name.html>\n";
+        // Send a 400 Bad Request if the request is neither GET nor HEAD
+        const char *error_msg = "HTTP/1.1 400 Bad Request\n\nInvalid Command. Please use GET or HEAD.\n";
         send(client_socket, error_msg, strlen(error_msg), 0);  // send error message back to client
     }
     else
     {
-        // extract the file name from the request (skip "GET /" part)
+        // Determine the request type and extract the file name
+        int start_index = is_get_request ? 4 : 5;  // Skip "GET " or "HEAD " part
         int i, j = 0;
-        for (i = 4; i < recv_len; i++, j++)
+        for (i = start_index; i < recv_len; i++, j++)
         {
             if (recv_buffer[i] == '\0' || recv_buffer[i] == '\n' || recv_buffer[i] == ' ')
             {
@@ -80,11 +82,11 @@ void handle_client_request(int client_socket)
             }
             else if (recv_buffer[i] == '/')
             {
-                --j; // tried without skipping slashes, but slashes shouldn't be part of file name
+                --j;  // Skipping slashes in the file name
             }
             else
             {
-                file_name[j] = recv_buffer[i];  // copy file name to the buffer
+                file_name[j] = recv_buffer[i];  // Copy file name to the buffer
             }
         }
         file_name[j] = '\0';  // properly terminate the string
@@ -99,54 +101,50 @@ void handle_client_request(int client_socket)
         }
         else
         {
-            // file is found, prepare the response
-            time(&current_time);  // get the current time
-            time_info = localtime(&current_time);  // format the time
-            strftime(time_str, sizeof(time_str), "%a, %d %b %Y %X %Z", time_info);
-
-            // get the size of the file
+            // Get the size of the file
             fseek(html_file, 0, SEEK_END);
             file_size = ftell(html_file);
             fseek(html_file, 0, SEEK_SET);
 
-            // create an HTTP response header
+            // Create an HTTP response header
             char header[BUFFER_SIZE];
             snprintf(header, sizeof(header),
                      "HTTP/1.1 200 OK\n"
-                     "Date: %s\n"
                      "Content-Length: %d\n"
                      "Connection: close\n"
                      "Content-Type: text/html\n\n",
-                     time_str, file_size);
+                     file_size);
 
-            // allocate memory for the response (tried stack allocation but too large)
-            response_buffer = (char *)malloc(strlen(header) + file_size + 1);
-            if (response_buffer == NULL)
+            // Send only the headers if the request is HEAD
+            send(client_socket, header, strlen(header), 0);
+
+            if (is_get_request)
             {
-                display_error("Memory allocation failed", false);
-                fclose(html_file);
-                close(client_socket);
-                pthread_exit(NULL);
+                // If it's a GET request, send the file content
+                response_buffer = (char *)malloc(file_size);
+                if (response_buffer == NULL)
+                {
+                    display_error("Memory allocation failed", false);
+                    fclose(html_file);
+                    close(client_socket);
+                    pthread_exit(NULL);
+                }
+
+                size_t read_size = fread(response_buffer, 1, file_size, html_file);
+                if (read_size < file_size)
+                {
+                    display_error("Error reading file", false);
+                    free(response_buffer);
+                    fclose(html_file);
+                    close(client_socket);
+                    pthread_exit(NULL);
+                }
+
+                // Send the file content after headers (only for GET requests)
+                send(client_socket, response_buffer, file_size, 0);
+                free(response_buffer);  // free memory after sending the response
             }
 
-            // copy the header and the file content into the response buffer
-            strcpy(response_buffer, header);
-            char *file_data = response_buffer + strlen(header);
-
-            // read the file content into the buffer
-            size_t read_size = fread(file_data, 1, file_size, html_file);
-            if (read_size < file_size)  // check if file read was successful
-            {
-                display_error("Error reading file", false);
-                free(response_buffer);  // free allocated memory
-                fclose(html_file);
-                close(client_socket);
-                pthread_exit(NULL);
-            }
-
-            // send the response to the client
-            send(client_socket, response_buffer, strlen(header) + file_size, 0);
-            free(response_buffer);  // free memory after sending the response
             fclose(html_file);  // close the file after reading
         }
     }
@@ -155,6 +153,7 @@ void handle_client_request(int client_socket)
     close(client_socket);
     pthread_exit(NULL);
 }
+
 
 // function to create server socket
 int create_server_socket(bool non_blocking, char *host, char *port)
@@ -170,16 +169,10 @@ int create_server_socket(bool non_blocking, char *host, char *port)
     hints.ai_protocol = 0;  // any protocol
 
     // getaddrinfo fills out server_info for us
-    int rc = getaddrinfo(host, port, &hints, &server_info);
-    if (rc != 0)
-    {
-        log_message("Host not found");
-        printf("Host not found --> %s\n", gai_strerror(rc));
-        if (rc == EAI_SYSTEM)
-            perror("getaddrinfo() failed");
-        return -1;  // return error
+   if (getaddrinfo(host, port, &hints, &server_info) != 0) {
+        perror("getaddrinfo failed");
+        return -1;
     }
-
     // create a socket (tried different protocols, but SOCK_STREAM is ideal for HTTP)
     int server_socket = socket(server_info->ai_family, server_info->ai_socktype, server_info->ai_protocol);
     if (server_socket < 0)

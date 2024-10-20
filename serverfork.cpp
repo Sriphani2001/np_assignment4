@@ -48,16 +48,20 @@ void handle_client(int client_socket) {
     request_length = received_bytes / sizeof(char);  // get the length of the request
     request_buffer[request_length - 2] = '\0';  // null-terminate the request string (removing extra characters)
 
-    // check if the request is a valid HTTP GET request
-    if (strncmp(request_buffer, "GET ", 4) != 0) {
-        // tried using POST, PUT methods but GET is more straightforward for this server
-        char error_message[] = "HTTP/1.1 400 Bad Request\n\nInvalid Command. Use: GET <filename>\n";
+    // check if the request is a valid HTTP GET or HEAD request
+    bool is_get_request = (strncmp(request_buffer, "GET ", 4) == 0);
+    bool is_head_request = (strncmp(request_buffer, "HEAD ", 5) == 0);
+
+    if (!is_get_request && !is_head_request) {
+        // Invalid method, send a 400 Bad Request response
+        char error_message[] = "HTTP/1.1 400 Bad Request\n\nInvalid Command. Use: GET or HEAD <filename>\n";
         send(client_socket, error_message, strlen(error_message), 0);  // send error message to client
     } else {
-        // parse the file name from the request (skip "GET /")
+        // parse the file name from the request (skip "GET /" or "HEAD /")
         request_length = strlen(request_buffer);
         int i, j = 0;
-        for (i = 4; i < request_length; i++, j++) {
+        int start_index = is_get_request ? 4 : 5;  // skip "GET " or "HEAD "
+        for (i = start_index; i < request_length; i++, j++) {
             if (request_buffer[i] == '\0' || request_buffer[i] == '\n' || request_buffer[i] == ' ') {
                 break;  // stop when end of the file name is found
             } else if (request_buffer[i] == '/') {
@@ -91,22 +95,25 @@ void handle_client(int client_socket) {
                      "HTTP/1.1 200 OK\nDate: %s\nContent-Length: %d\nConnection: close\nContent-Type: text/html\n\n",
                      time_string, file_size);
 
-            // allocate memory for the full response (header + file content)
-            response_buffer = (char *)malloc(strlen(header) + file_size + 1);
-            if (response_buffer == NULL) {
-                print_error("Memory allocation failed", false);  // error if malloc fails
-                fclose(file);  // close the file
-                close(client_socket);  // close the socket
-                exit(0);  // exit the child process
+            // send the header to the client
+            send(client_socket, header, strlen(header), 0);
+
+            // For GET requests, send the file content as well
+            if (is_get_request) {
+                response_buffer = (char *)malloc(file_size + 1);  // allocate memory for file content
+                if (response_buffer == NULL) {
+                    print_error("Memory allocation failed", false);  // error if malloc fails
+                    fclose(file);  // close the file
+                    close(client_socket);  // close the socket
+                    exit(0);  // exit the child process
+                }
+
+                fread(response_buffer, 1, file_size, file);  // read the file content into the buffer
+                send(client_socket, response_buffer, file_size, 0);  // send the file content to the client
+
+                free(response_buffer);  // free the allocated memory for the response
             }
 
-            strcpy(response_buffer, header);  // copy the HTTP header to the response buffer
-            fread(response_buffer + strlen(header), 1, file_size, file);  // read the file content into the buffer
-
-            // send the full response to the client
-            send(client_socket, response_buffer, strlen(header) + file_size, 0);
-
-            free(response_buffer);  // free the allocated memory for the response
             fclose(file);  // close the file after sending
         }
     }
